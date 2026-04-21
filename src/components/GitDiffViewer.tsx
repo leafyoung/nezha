@@ -1,6 +1,10 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { X, FileCode } from "lucide-react";
+import { Columns2, FileCode, Rows3, X } from "lucide-react";
+import { DiffFileBlock } from "./git-diff/DiffFileBlock";
+import { parseDiff, plural } from "./git-diff/parse";
+import type { DiffViewMode } from "./git-diff/types";
 
 interface Props {
   projectPath: string;
@@ -13,51 +17,36 @@ interface Props {
   onClose: () => void;
 }
 
-function DiffLine({ line }: { line: string }) {
-  let bg = "transparent";
-  let color = "var(--text-secondary)";
-
-  if (line.startsWith("+") && !line.startsWith("+++")) {
-    bg = "rgba(46, 160, 67, 0.12)";
-    color = "#3fb950";
-  } else if (line.startsWith("-") && !line.startsWith("---")) {
-    bg = "rgba(248, 81, 73, 0.12)";
-    color = "#f85149";
-  } else if (line.startsWith("@@")) {
-    bg = "rgba(88, 166, 255, 0.08)";
-    color = "#79c0ff";
-  } else if (
-    line.startsWith("diff --git") ||
-    line.startsWith("index ") ||
-    line.startsWith("---") ||
-    line.startsWith("+++")
-  ) {
-    color = "var(--text-hint)";
-  }
-
+function DiffToolbarButton({
+  active,
+  title,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  title: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
   return (
-    <div
+    <button
+      onClick={onClick}
+      title={title}
       style={{
-        display: "flex",
-        background: bg,
-        fontFamily: "var(--font-mono, 'Menlo', monospace)",
-        fontSize: 12,
-        lineHeight: "18px",
-        whiteSpace: "pre-wrap",
-        wordBreak: "break-all",
+        width: 28,
+        height: 28,
+        border: "none",
+        borderRadius: 6,
+        background: active ? "var(--bg-hover)" : "transparent",
+        color: active ? "var(--accent)" : "var(--text-hint)",
+        cursor: "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
-      <span
-        style={{
-          color,
-          padding: "0 12px",
-          userSelect: "none",
-          flexShrink: 0,
-        }}
-      >
-        {line || " "}
-      </span>
-    </div>
+      {children}
+    </button>
   );
 }
 
@@ -73,6 +62,7 @@ export function GitDiffViewer({
   const [diff, setDiff] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<DiffViewMode>("unified");
 
   useEffect(() => {
     setLoading(true);
@@ -109,7 +99,9 @@ export function GitDiffViewer({
     load();
   }, [projectPath, mode, commitHash, filePath, staged]);
 
-  const lines = diff.split("\n");
+  const parsedFiles = useMemo(() => parseDiff(diff, projectPath), [diff, projectPath]);
+  const totalAdditions = parsedFiles.reduce((sum, file) => sum + file.additions, 0);
+  const totalDeletions = parsedFiles.reduce((sum, file) => sum + file.deletions, 0);
 
   return (
     <div
@@ -121,52 +113,96 @@ export function GitDiffViewer({
         background: "var(--bg-panel)",
       }}
     >
-      {/* Header */}
       <div
         style={{
-          height: 40,
+          minHeight: 50,
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "0 12px",
+          gap: 10,
+          padding: "0 14px",
           borderBottom: "1px solid var(--border-dim)",
           flexShrink: 0,
           background: "var(--bg-panel)",
         }}
       >
-        <FileCode size={14} color="var(--text-muted)" />
-        <span
+        <FileCode size={15} color="var(--accent)" />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 13.5,
+              fontWeight: 700,
+              color: "var(--text-primary)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {title}
+          </div>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              marginTop: 2,
+              fontSize: 12,
+              color: "var(--text-hint)",
+            }}
+          >
+            <span>{plural(parsedFiles.length, "changed file")}</span>
+            <span style={{ color: "#2f8f46", fontWeight: 650 }}>+{totalAdditions}</span>
+            <span style={{ color: "#c93f39", fontWeight: 650 }}>-{totalDeletions}</span>
+          </div>
+        </div>
+
+        <div
           style={{
-            flex: 1,
-            fontSize: 12.5,
-            fontWeight: 500,
-            color: "var(--text-primary)",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 2,
+            padding: 2,
+            border: "1px solid var(--border-dim)",
+            borderRadius: 8,
+            background: "var(--bg-card)",
           }}
         >
-          {title}
-        </span>
+          <DiffToolbarButton
+            active={viewMode === "unified"}
+            title="Single column diff"
+            onClick={() => setViewMode("unified")}
+          >
+            <Rows3 size={15} />
+          </DiffToolbarButton>
+          <DiffToolbarButton
+            active={viewMode === "split"}
+            title="Two column diff"
+            onClick={() => setViewMode("split")}
+          >
+            <Columns2 size={15} />
+          </DiffToolbarButton>
+        </div>
+
         <button
           onClick={onClose}
+          title="Close diff"
           style={{
-            background: "none",
+            width: 28,
+            height: 28,
+            background: "transparent",
             border: "none",
             cursor: "pointer",
-            padding: 4,
-            borderRadius: 4,
+            borderRadius: 6,
             color: "var(--text-hint)",
             display: "flex",
             alignItems: "center",
+            justifyContent: "center",
           }}
         >
-          <X size={14} />
+          <X size={15} />
         </button>
       </div>
 
-      {/* Content */}
-      <div style={{ flex: 1, overflowY: "auto", overflowX: "auto" }}>
+      <div style={{ flex: 1, overflow: "auto", padding: 14 }}>
         {loading ? (
           <div
             style={{ padding: 24, color: "var(--text-hint)", fontSize: 13, textAlign: "center" }}
@@ -182,9 +218,13 @@ export function GitDiffViewer({
             No changes
           </div>
         ) : (
-          <div style={{ minWidth: "100%" }}>
-            {lines.map((line, i) => (
-              <DiffLine key={i} line={line} />
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: "100%" }}>
+            {parsedFiles.map((file, index) => (
+              <DiffFileBlock
+                key={`${file.displayPath}-${index}`}
+                file={file}
+                viewMode={viewMode}
+              />
             ))}
           </div>
         )}
