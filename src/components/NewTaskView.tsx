@@ -14,6 +14,7 @@ import { ImageAttachments } from "./new-task/ImageAttachments";
 import { AgentPermSelector } from "./new-task/AgentPermSelector";
 import claudeGif from "../assets/gif/claude.gif";
 import codexGif from "../assets/gif/codex.gif";
+import piLogo from "../assets/pi.svg";
 import s from "../styles";
 
 interface PastedImage {
@@ -79,7 +80,7 @@ export function NewTaskView({
     )
       .then((cfg) => {
         const defaultAgent = cfg.agent.default;
-        if (defaultAgent === "claude" || defaultAgent === "codex") {
+        if (defaultAgent === "claude" || defaultAgent === "codex" || defaultAgent === "pi") {
           setAgent(defaultAgent);
         }
         const defaultPerm = cfg.agent.default_permission_mode;
@@ -261,7 +262,7 @@ export function NewTaskView({
       {/* Header */}
       <div style={s.newTaskHeader}>
         <img
-          src={agent === "claude" ? claudeGif : codexGif}
+          src={agent === "claude" ? claudeGif : agent === "codex" ? codexGif : piLogo}
           alt=""
           style={s.newTaskClaudeGif}
         />
@@ -290,6 +291,8 @@ export function NewTaskView({
             </span>{" "}
             {agent === "claude"
               ? "Add a CLAUDE.md to the project root to give Claude Code context about your codebase, conventions, and preferences — it will follow them on every task."
+              : agent === "pi"
+              ? "Add an AGENTS.md to the project root to give Pi context about your codebase, conventions, and preferences — it will follow them on every task."
               : "Add an AGENTS.md to the project root to give Codex context about your codebase, conventions, and preferences — it will follow them on every task."}
           </div>
         </div>

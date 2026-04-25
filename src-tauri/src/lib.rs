@@ -20,6 +20,12 @@ mod usage;
 
 use session::{ClaudeSessionInfo, CodexSessionInfo};
 
+/// Generic session info for pi agent (reuses same fields as Claude/Codex).
+pub(crate) struct PiSessionInfo {
+    pub(crate) session_id: String,
+    pub(crate) session_path: String,
+}
+
 pub struct TaskManager {
     pub(crate) pty_masters: Mutex<HashMap<String, Box<dyn portable_pty::MasterPty + Send>>>,
     pub(crate) pty_writers: Mutex<HashMap<String, Box<dyn Write + Send>>>,
@@ -28,6 +34,7 @@ pub struct TaskManager {
     pub(crate) cancelled_tasks: Mutex<HashSet<String>>,
     pub(crate) codex_sessions: Mutex<HashMap<String, CodexSessionInfo>>,
     pub(crate) claude_sessions: Mutex<HashMap<String, ClaudeSessionInfo>>,
+    pub(crate) pi_sessions: Mutex<HashMap<String, PiSessionInfo>>,
     pub(crate) claimed_session_paths: Mutex<HashSet<String>>,
     /// Persistent `codex app-server` process reused across `read_usage_snapshot` calls.
     pub(crate) codex_rpc: Arc<Mutex<Option<CodexRpcClient>>>,
@@ -63,6 +70,7 @@ pub fn run() {
             cancelled_tasks: Mutex::new(HashSet::new()),
             codex_sessions: Mutex::new(HashMap::new()),
             claude_sessions: Mutex::new(HashMap::new()),
+            pi_sessions: Mutex::new(HashMap::new()),
             claimed_session_paths: Mutex::new(HashSet::new()),
             codex_rpc: Arc::new(Mutex::new(None)),
         })

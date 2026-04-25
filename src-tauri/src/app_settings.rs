@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 static CACHED_CLAUDE_VERSION: OnceLock<Mutex<Option<Option<String>>>> = OnceLock::new();
 static CACHED_CODEX_VERSION: OnceLock<Mutex<Option<Option<String>>>> = OnceLock::new();
+static CACHED_PI_VERSION: OnceLock<Mutex<Option<Option<String>>>> = OnceLock::new();
 
 pub fn get_login_shell_env() -> &'static [(String, String)] {
     crate::platform::login_shell_env()
@@ -28,6 +29,8 @@ pub struct AppSettings {
     pub claude_path: String,
     #[serde(default)]
     pub codex_path: String,
+    #[serde(default)]
+    pub pi_path: String,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -45,6 +48,13 @@ fn get_agent_configured_path(settings: &AppSettings, agent: &str) -> String {
                 settings.codex_path.clone()
             }
         }
+        "pi" => {
+            if settings.pi_path.is_empty() {
+                "pi".to_string()
+            } else {
+                settings.pi_path.clone()
+            }
+        }
         _ => {
             if settings.claude_path.is_empty() {
                 "claude".to_string()
@@ -60,6 +70,9 @@ fn clear_cached_versions() {
         .get_or_init(|| Mutex::new(None))
         .lock() = None;
     *CACHED_CODEX_VERSION
+        .get_or_init(|| Mutex::new(None))
+        .lock() = None;
+    *CACHED_PI_VERSION
         .get_or_init(|| Mutex::new(None))
         .lock() = None;
 }
@@ -277,6 +290,7 @@ fn normalize_settings(settings: AppSettings) -> AppSettings {
     AppSettings {
         claude_path: resolve_agent_launch_spec_from_path("claude", &settings.claude_path).program,
         codex_path: resolve_agent_launch_spec_from_path("codex", &settings.codex_path).program,
+        pi_path: resolve_agent_launch_spec_from_path("pi", &settings.pi_path).program,
     }
 }
 
@@ -290,6 +304,7 @@ pub fn load_settings_internal() -> AppSettings {
         let settings = normalize_settings(AppSettings {
             claude_path: detect_path("claude"),
             codex_path: detect_path("codex"),
+            pi_path: detect_path("pi"),
         });
         if let Ok(dir) = nezha_dir() {
             let _ = fs::create_dir_all(&dir);
@@ -340,6 +355,7 @@ pub fn detect_agent_paths() -> Result<AppSettings, String> {
     Ok(normalize_settings(AppSettings {
         claude_path: detect_path("claude"),
         codex_path: detect_path("codex"),
+        pi_path: detect_path("pi"),
     }))
 }
 
@@ -370,6 +386,8 @@ fn detect_versions_for_settings(settings: &AppSettings) -> AgentVersions {
         claude_version: detect_version(&get_agent_launch_spec_from_settings(settings, "claude"))
             .unwrap_or_default(),
         codex_version: detect_version(&get_agent_launch_spec_from_settings(settings, "codex"))
+            .unwrap_or_default(),
+        pi_version: detect_version(&get_agent_launch_spec_from_settings(settings, "pi"))
             .unwrap_or_default(),
     }
 }
@@ -407,6 +425,18 @@ pub fn detect_codex_version() -> Option<String> {
     detected
 }
 
+pub fn detect_pi_version() -> Option<String> {
+    let cache = CACHED_PI_VERSION.get_or_init(|| Mutex::new(None));
+    let mut guard = cache.lock();
+    if let Some(version) = guard.clone() {
+        return version;
+    }
+
+    let detected = detect_version(&get_agent_launch_spec("pi"));
+    *guard = Some(detected.clone());
+    detected
+}
+
 pub fn claude_version_gte(saved_version: &str, min_version: &str) -> bool {
     let version = if saved_version.is_empty() {
         match detect_claude_version() {
@@ -424,6 +454,7 @@ pub fn detect_agent_versions() -> Result<AgentVersions, String> {
     Ok(AgentVersions {
         claude_version: detect_claude_version().unwrap_or_default(),
         codex_version: detect_codex_version().unwrap_or_default(),
+        pi_version: detect_pi_version().unwrap_or_default(),
     })
 }
 
@@ -436,4 +467,5 @@ pub fn detect_agent_versions_for_settings(settings: AppSettings) -> Result<Agent
 pub struct AgentVersions {
     pub claude_version: String,
     pub codex_version: String,
+    pub pi_version: String,
 }

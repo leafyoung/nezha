@@ -229,10 +229,10 @@ export function RunningView({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "var(--text-muted)" }}>
           <span>
-            {task.agent === "claude" ? "✦ Claude Code" : "⬡ Codex"} ·{" "}
+            {task.agent === "claude" ? "✦ Claude Code" : task.agent === "codex" ? "⬡ Codex" : "π Pi"} ·{" "}
             {permissionModeLabel(task.permissionMode, task.agent)}
           </span>
-          {ENABLE_USAGE_INSIGHTS && usageSnapshot && (task.agent === "claude"
+          {ENABLE_USAGE_INSIGHTS && usageSnapshot && task.agent !== "pi" && (task.agent === "claude"
             ? usageSnapshot.claude.status === "available" && (
                 <>
                   {usageSnapshot.claude.data.fiveHour && (

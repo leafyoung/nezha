@@ -25,20 +25,22 @@ fn task_attachments_dir(project_path: &str, task_id: &str) -> std::path::PathBuf
         .join(task_id)
 }
 
-fn has_task_session(app: &AppHandle, task_id: &str, is_codex: bool) -> bool {
+fn has_task_session(app: &AppHandle, task_id: &str, is_codex: bool, is_pi: bool) -> bool {
     let tm = app.state::<TaskManager>();
     if is_codex {
         tm.codex_sessions.lock().contains_key(task_id)
+    } else if is_pi {
+        tm.pi_sessions.lock().contains_key(task_id)
     } else {
         tm.claude_sessions.lock().contains_key(task_id)
     }
 }
 
 /// 任务结束后，等待会话注册完成，最长等待 500ms。
-fn wait_for_session(app: &AppHandle, task_id: &str, is_codex: bool) {
+fn wait_for_session(app: &AppHandle, task_id: &str, is_codex: bool, is_pi: bool) {
     let deadline = Instant::now() + SESSION_WAIT_MAX;
     while Instant::now() < deadline {
-        if has_task_session(app, task_id, is_codex) {
+        if has_task_session(app, task_id, is_codex, is_pi) {
             return;
         }
         std::thread::sleep(SESSION_WAIT_POLL);
@@ -50,6 +52,7 @@ fn finalize_task_exit(
     task_id: &str,
     project_path: &str,
     is_codex: bool,
+    is_pi: bool,
     exit_ok: bool,
     exit_code: Option<u32>,
 ) {
@@ -68,8 +71,12 @@ fn finalize_task_exit(
         let codex_path = codex_info.map(|info| info.session_path);
         let claude_info = tm.claude_sessions.lock().remove(task_id);
         let claude_path = claude_info.as_ref().map(|info| info.session_path.clone());
+        let pi_info = tm.pi_sessions.lock().remove(task_id);
+        let pi_path = pi_info.as_ref().map(|info| info.session_path.clone());
         had_agent_session = if is_codex {
             codex_path.is_some()
+        } else if is_pi {
+            pi_info.is_some()
         } else {
             claude_info.is_some()
         };
@@ -78,6 +85,9 @@ fn finalize_task_exit(
             claimed.remove(&path);
         }
         if let Some(path) = claude_path {
+            claimed.remove(&path);
+        }
+        if let Some(path) = pi_path {
             claimed.remove(&path);
         }
     }
@@ -330,7 +340,7 @@ fn spawn_pty_reader(
 }
 
 /// 在后台线程中轮询子进程退出状态，退出后调用 finalize_task_exit。
-fn spawn_exit_monitor(app: AppHandle, task_id: String, project_path: String, is_codex: bool) {
+fn spawn_exit_monitor(app: AppHandle, task_id: String, project_path: String, is_codex: bool, is_pi: bool) {
     tokio::task::spawn_blocking(move || loop {
         let exit_status = {
             let tm = app.state::<TaskManager>();
@@ -346,8 +356,8 @@ fn spawn_exit_monitor(app: AppHandle, task_id: String, project_path: String, is_
             let exit_ok = status.success();
             let exit_code = if exit_ok { None } else { Some(status.exit_code()) };
             // 等待会话注册完成
-            wait_for_session(&app, &task_id, is_codex);
-            finalize_task_exit(&app, &task_id, &project_path, is_codex, exit_ok, exit_code);
+            wait_for_session(&app, &task_id, is_codex, is_pi);
+            finalize_task_exit(&app, &task_id, &project_path, is_codex, is_pi, exit_ok, exit_code);
             return;
         }
 
@@ -435,6 +445,7 @@ pub async fn run_task(
     let launch = crate::app_settings::get_agent_launch_spec(&agent);
     let agent_bin = launch.program.clone();
     let is_codex = agent == "codex";
+    let is_pi = agent == "pi";
 
     // 读取项目配置中已保存的 Claude 版本，用于判断是否支持 --session-id
     let saved_claude_version = config.agent.claude_version.clone();
@@ -487,6 +498,7 @@ pub async fn run_task(
         task_id.clone(),
         project_path.clone(),
         is_codex,
+        is_pi,
         session_rx,
         pre_session_id,
     );
@@ -503,7 +515,7 @@ pub async fn run_task(
         Some(session_tx),
         None,
     );
-    spawn_exit_monitor(app, task_id, project_path, is_codex);
+    spawn_exit_monitor(app, task_id, project_path, is_codex, is_pi);
 
     Ok(())
 }
@@ -615,6 +627,7 @@ pub async fn resume_task(
     );
 
     let is_codex = agent == "codex";
+    let is_pi = agent == "pi";
 
     // resume 时 session_id 已知，直接查找文件并开始监视
     spawn_resume_session_watcher(
@@ -637,7 +650,7 @@ pub async fn resume_task(
         None,
         None,
     );
-    spawn_exit_monitor(app, task_id, project_path, is_codex);
+    spawn_exit_monitor(app, task_id, project_path, is_codex, is_pi);
 
     Ok(())
 }

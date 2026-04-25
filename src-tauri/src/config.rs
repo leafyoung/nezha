@@ -35,6 +35,8 @@ pub struct AgentConfig {
     pub claude_version: String,
     #[serde(default)]
     pub codex_version: String,
+    #[serde(default)]
+    pub pi_version: String,
 }
 
 fn default_permission_mode() -> String {
@@ -61,6 +63,7 @@ impl Default for ProjectConfig {
                 prompt_prefix: String::new(),
                 claude_version: String::new(),
                 codex_version: String::new(),
+                pi_version: String::new(),
             },
             git: GitConfig {
                 commit_prompt: "You are a git commit message generator. Based on the provided git diff, write a concise and descriptive commit message. Follow these rules:\n1. Use the imperative mood (e.g., \"Add feature\" not \"Added feature\")\n2. First line: type(scope): short summary (50 chars or less)\n   Types: feat, fix, docs, style, refactor, test, chore\n3. If needed, add a blank line then a brief body explaining what and why\n4. Output ONLY the commit message text, no explanations or markdown formatting".to_string(),
@@ -98,6 +101,12 @@ pub fn init_project_config(project_path: String) -> Result<ProjectConfig, String
     if config.agent.codex_version.is_empty() {
         if let Some(v) = crate::app_settings::detect_codex_version() {
             config.agent.codex_version = v;
+            updated = true;
+        }
+    }
+    if config.agent.pi_version.is_empty() {
+        if let Some(v) = crate::app_settings::detect_pi_version() {
+            config.agent.pi_version = v;
             updated = true;
         }
     }
@@ -143,6 +152,7 @@ fn agent_config_path(agent: &str) -> Result<std::path::PathBuf, String> {
     match agent {
         "claude" => Ok(home.join(".claude").join("settings.json")),
         "codex" => Ok(home.join(".codex").join("config.toml")),
+        "pi" => Ok(home.join(".pi").join("agent").join("settings.json")),
         _ => Err(format!("Unknown agent: {}", agent)),
     }
 }

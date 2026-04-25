@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -1170,14 +1170,130 @@ fn send_status_command(app: &AppHandle, task_id: &str, is_codex: bool) {
 ///
 /// 当 `pre_session_id` 为 `Some` 时（Claude >= 2.1.87），跳过 `/status` 发现，
 /// 直接使用预置 session id 注册会话文件。若文件在超时内未出现，自动回退到 `/status` 流程。
+
+// ── Pi 会话监视器 ──────────────────────────────────────────────────────────
+
+/// Pi session directory is derived from cwd: replace non-alphanumeric chars with '-'.
+fn pi_session_dir_for_project(project_path: &str) -> Option<PathBuf> {
+    let home = crate::platform::home_dir()?;
+    let dir_name: String = project_path
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    Some(home.join(".pi").join("agent").join("sessions").join(dir_name))
+}
+
+/// Find the most recently modified session file in a pi session directory.
+fn find_latest_pi_session_file(project_path: &str, since: SystemTime) -> Option<PathBuf> {
+    let dir = pi_session_dir_for_project(project_path)?;
+    if !dir.exists() {
+        return None;
+    }
+    let mut latest: Option<(PathBuf, SystemTime)> = None;
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let modified = fs::metadata(&path)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            if modified > since {
+                if latest.as_ref().map(|(_, t)| modified > *t).unwrap_or(true) {
+                    latest = Some((path, modified));
+                }
+            }
+        }
+    }
+    latest.map(|(p, _)| p)
+}
+
+/// Extract session ID from pi session file header line.
+fn extract_pi_session_id(path: &Path) -> Option<String> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut first_line = String::new();
+    reader.read_line(&mut first_line).ok()?;
+    let val: serde_json::Value = serde_json::from_str(&first_line).ok()?;
+    if val.get("type").and_then(|v| v.as_str()) == Some("session") {
+        val.get("id").and_then(|v| v.as_str()).map(|s| s.to_string())
+    } else {
+        None
+    }
+}
+
+/// Watch for pi session file by polling the session directory for new files.
+/// Pi doesn't have a /status command, so we discover sessions by file system polling.
+fn watch_pi_session_from_pty(
+    app: AppHandle,
+    task_id: String,
+    project_path: String,
+    rx: mpsc::Receiver<String>,
+) {
+    let start = SystemTime::now();
+    let deadline = Instant::now() + Duration::from_secs(30);
+
+    // Wait briefly for pi to start and create session
+    while Instant::now() < deadline {
+        if !is_task_active(&app, &task_id) {
+            return;
+        }
+
+        if let Some(path) = find_latest_pi_session_file(&project_path, start) {
+            if let Some(session_id) = extract_pi_session_id(&path) {
+                let path_string = path.to_string_lossy().into_owned();
+                if claim_session_path(&app, &path_string) {
+                    let tm = app.state::<TaskManager>();
+                    tm.claimed_session_paths.lock().insert(path_string.clone());
+
+                    let _ = app.emit(
+                        "task-session",
+                        serde_json::json!({
+                            "task_id": task_id,
+                            "session_id": session_id,
+                            "session_path": path_string
+                        }),
+                    );
+                }
+                // Drain remaining PTY output
+                while rx.recv_timeout(Duration::from_millis(100)).is_ok() {}
+                return;
+            }
+        }
+
+        // Consume PTY output to prevent blocking
+        match rx.recv_timeout(Duration::from_millis(300)) {
+            Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
 pub(crate) fn spawn_status_session_watcher(
     app: AppHandle,
     task_id: String,
     project_path: String,
     is_codex: bool,
+    is_pi: bool,
     rx: mpsc::Receiver<String>,
     pre_session_id: Option<String>,
 ) {
+    // ── Pi: watch for session file creation ──
+    if is_pi {
+        thread::spawn(move || {
+            watch_pi_session_from_pty(app, task_id, project_path, rx);
+        });
+        return;
+    }
+
     // ── Claude >= 2.1.87 快速路径：预置 session id，不发 /status ──
     if let Some(ref sid) = pre_session_id {
         if !is_codex {

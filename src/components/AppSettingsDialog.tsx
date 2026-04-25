@@ -16,6 +16,7 @@ import s from "../styles";
 import claudeLogo from "../assets/claude.svg";
 import chatgptLogo from "../assets/chatgpt.svg";
 import appLogo from "../assets/app-logo.png";
+import piLogo from "../assets/pi.svg";
 
 // Reuse the same singleton highlighter as FileViewer
 import type { Highlighter } from "shiki";
@@ -29,19 +30,21 @@ function getHighlighter(): Promise<Highlighter> {
   return _highlighterPromise!;
 }
 
-type NavKey = "general" | "theme" | "about" | "claude" | "codex";
+type NavKey = "general" | "theme" | "about" | "claude" | "codex" | "pi";
 
 interface AppSettings {
   claude_path: string;
   codex_path: string;
+  pi_path: string;
 }
 
 interface AgentVersions {
   claude_version: string;
   codex_version: string;
+  pi_version: string;
 }
 
-type AgentKey = "claude" | "codex";
+type AgentKey = "claude" | "codex" | "pi";
 
 const GITHUB_REPO_URL = "https://github.com/hanshuaikang/nezha";
 
@@ -49,13 +52,16 @@ function getAgentSettingsFilePath(agent: AgentKey): string {
   if (APP_PLATFORM === "windows") {
     return agent === "claude"
       ? "%USERPROFILE%\\.claude\\settings.json"
+      : agent === "pi"
+      ? "%USERPROFILE%\\.pi\\agent\\settings.json"
       : "%USERPROFILE%\\.codex\\config.toml";
   }
 
-  return agent === "claude" ? "~/.claude/settings.json" : "~/.codex/config.toml";
+  return agent === "claude" ? "~/.claude/settings.json" : agent === "pi" ? "~/.pi/agent/settings.json" : "~/.codex/config.toml";
 }
 
 function getAgentExecutablePlaceholder(agent: AgentKey): string {
+  if (agent === "pi") return "pi";
   if (APP_PLATFORM === "windows") {
     return agent === "claude"
       ? "claude or C:\\Users\\<you>\\AppData\\Roaming\\npm\\claude.cmd"
@@ -96,6 +102,13 @@ const NAV_ITEMS: Array<{
     logo: chatgptLogo,
     filePath: getAgentSettingsFilePath("codex"),
     lang: "toml",
+  },
+  {
+    key: "pi",
+    label: "Pi",
+    logo: piLogo,
+    filePath: getAgentSettingsFilePath("pi"),
+    lang: "json",
   },
 ];
 
@@ -535,11 +548,12 @@ function ThemePanel({ themeMode, systemPrefersDark, onThemeModeChange }: ThemePa
 // ── General Panel ─────────────────────────────────────────────────────────────
 
 function GeneralPanel() {
-  const [settings, setSettings] = useState<AppSettings>({ claude_path: "", codex_path: "" });
-  const [original, setOriginal] = useState<AppSettings>({ claude_path: "", codex_path: "" });
+  const [settings, setSettings] = useState<AppSettings>({ claude_path: "", codex_path: "", pi_path: "" });
+  const [original, setOriginal] = useState<AppSettings>({ claude_path: "", codex_path: "", pi_path: "" });
   const [versions, setVersions] = useState<AgentVersions>({
     claude_version: "",
     codex_version: "",
+    pi_version: "",
   });
   const [loading, setLoading] = useState(true);
   const [detectingPaths, setDetectingPaths] = useState(false);
@@ -605,7 +619,7 @@ function GeneralPanel() {
   }
 
   const isDirty =
-    settings.claude_path !== original.claude_path || settings.codex_path !== original.codex_path;
+    settings.claude_path !== original.claude_path || settings.codex_path !== original.codex_path || settings.pi_path !== original.pi_path;
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
@@ -739,9 +753,21 @@ function GeneralPanel() {
               <span style={hintStyle}>Leave empty to use codex from the system PATH.</span>
             </div>
 
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Pi Path</label>
+              <input
+                style={inputStyle}
+                value={settings.pi_path}
+                onChange={(e) => setSettings((prev) => ({ ...prev, pi_path: e.target.value }))}
+                placeholder={getAgentExecutablePlaceholder("pi")}
+                spellCheck={false}
+              />
+              <span style={hintStyle}>Leave empty to use pi from the system PATH.</span>
+            </div>
+
             <div style={{ ...fieldStyle, marginBottom: 0 }}>
               <label style={labelStyle}>Installed Versions</label>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
                 <div>
                   <div style={{ fontSize: 11, color: "var(--text-hint)", marginBottom: 4 }}>
                     Claude Code
@@ -761,6 +787,18 @@ function GeneralPanel() {
                   <input
                     style={inputStyle}
                     value={versions.codex_version}
+                    readOnly
+                    placeholder="Not detected"
+                    spellCheck={false}
+                  />
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--text-hint)", marginBottom: 4 }}>
+                    Pi
+                  </div>
+                  <input
+                    style={inputStyle}
+                    value={versions.pi_version}
                     readOnly
                     placeholder="Not detected"
                     spellCheck={false}

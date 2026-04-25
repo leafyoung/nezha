@@ -291,7 +291,7 @@ function App() {
 
   function handleResumeTask(taskId: string) {
     const task = tasks.find((t) => t.id === taskId);
-    const sessionId = task?.agent === "codex" ? task.codexSessionId : task?.claudeSessionId;
+    const sessionId = task?.agent === "codex" ? task.codexSessionId : task?.agent === "pi" ? task.codexSessionId : task?.claudeSessionId;
     if (!task || !sessionId) return;
     const project = projects.find((p) => p.id === task.projectId);
     if (!project) return;
@@ -488,6 +488,7 @@ function App() {
           changed = true;
           return { ...task, claudeSessionId: sessionId, claudeSessionPath: sessionPath };
         } else {
+          // codex and pi both use codex session fields
           if (task.codexSessionId === sessionId && task.codexSessionPath === sessionPath)
             return task;
           changed = true;

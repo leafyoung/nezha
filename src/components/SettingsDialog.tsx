@@ -213,6 +213,7 @@ function ProjectSettings({ projectPath, onClose }: { projectPath: string; onClos
                   options={[
                     { value: "claude", label: "Claude Code" },
                     { value: "codex", label: "Codex" },
+                    { value: "pi", label: "Pi" },
                   ]}
                 />
               </div>
