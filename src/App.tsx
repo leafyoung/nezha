@@ -137,7 +137,25 @@ function App() {
       const chunks = await Promise.all(
         loadedProjects.map((p) => invoke<Task[]>("load_project_tasks", { projectId: p.id })),
       );
-      setTasks(chunks.flat());
+      const allTasks = chunks.flat();
+
+      // After restart, tasks persisted as "running"/"pending"/"input_required" have no
+      // active PTY subprocess. Mark them as "exited" so the Resume button appears.
+      const fixedTasks = allTasks.map((t) =>
+        isActiveTaskStatus(t.status) ? { ...t, status: "done" as TaskStatus } : t,
+      );
+      // Persist the corrected statuses
+      for (const proj of loadedProjects) {
+        const projTasks = fixedTasks.filter((t) => t.projectId === proj.id);
+        if (projTasks.some((t) => {
+          const orig = allTasks.find((o) => o.id === t.id);
+          return orig ? isActiveTaskStatus(orig.status) : false;
+        })) {
+          persistProjectTasks(proj.id, projTasks, (msg: string) => console.error(msg));
+        }
+      }
+
+      setTasks(fixedTasks);
     }
 
     init().catch(console.error);
@@ -291,7 +309,12 @@ function App() {
 
   function handleResumeTask(taskId: string) {
     const task = tasks.find((t) => t.id === taskId);
-    const sessionId = task?.agent === "codex" ? task.codexSessionId : task?.agent === "pi" ? task.codexSessionId : task?.claudeSessionId;
+    // Claude and Pi use session ID; Claude also needs a prompt to continue
+    const sessionId = task?.agent === "pi"
+      ? task.codexSessionId
+      : task?.agent === "codex"
+        ? task?.codexSessionId
+        : task?.claudeSessionId;
     if (!task || !sessionId) return;
     const project = projects.find((p) => p.id === task.projectId);
     if (!project) return;

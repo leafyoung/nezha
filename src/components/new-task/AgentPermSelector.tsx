@@ -15,16 +15,17 @@ import { permissionModeLabel } from "../../types";
 import s from "../../styles";
 import claudeLogo from "../../assets/claude.svg";
 import chatgptLogo from "../../assets/chatgpt.svg";
+import piLogo from "../../assets/pi.svg";
 
-const AGENTS: AgentType[] = ["claude", "codex"];
+const AGENTS: AgentType[] = ["claude", "codex", "pi"];
 const PERMS: PermissionMode[] = ["ask", "auto_edit", "full_access"];
 
 function agentLabel(agent: AgentType): string {
-  return agent === "claude" ? "Claude Code" : "Codex";
+  return agent === "claude" ? "Claude Code" : agent === "pi" ? "Pi" : "Codex";
 }
 
 function agentIcon(agent: AgentType): string {
-  return agent === "claude" ? claudeLogo : chatgptLogo;
+  return agent === "claude" ? claudeLogo : agent === "pi" ? piLogo : chatgptLogo;
 }
 
 function setMenuItemHover(el: HTMLElement, hover: boolean) {
@@ -72,6 +73,8 @@ export function AgentPermSelector({
 }) {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const canSend = !isEmpty || hasImages;
+  const permDisabled = agent === "pi";
+  const effectivePermMode: PermissionMode = permDisabled ? "full_access" : permMode;
 
   async function handleImageFiles(files: FileList | null) {
     const images = Array.from(files ?? []).filter((file) => file.type.startsWith("image/"));
@@ -171,7 +174,7 @@ export function AgentPermSelector({
               src={agentIcon(agent)}
               style={{
                 ...s.toolbarMenuItemIcon,
-                opacity: agent === "claude" ? 1 : 0.72,
+                opacity: agent === "claude" ? 1 : agent === "pi" ? 1 : 0.72,
               }}
             />
             <span>{agentLabel(agent)}</span>
@@ -196,7 +199,7 @@ export function AgentPermSelector({
                       src={agentIcon(item)}
                       style={{
                         ...s.toolbarMenuItemIcon,
-                        opacity: item === "claude" ? 1 : 0.72,
+                        opacity: item === "claude" ? 1 : item === "pi" ? 1 : 0.72,
                       }}
                     />
                     <Select.ItemText>{agentLabel(item)}</Select.ItemText>
@@ -207,8 +210,18 @@ export function AgentPermSelector({
           </Select.Portal>
         </Select.Root>
 
-        <Select.Root value={permMode} onValueChange={(v) => onSetPermMode(v as PermissionMode)}>
-          <Select.Trigger style={s.toolbarBtn} aria-label="Permission mode">
+        <Select.Root
+          value={effectivePermMode}
+          onValueChange={(v) => {
+            if (!permDisabled) onSetPermMode(v as PermissionMode);
+          }}
+          disabled={permDisabled}
+        >
+          <Select.Trigger
+            style={{ ...s.toolbarBtn, opacity: permDisabled ? 0.72 : 1 }}
+            aria-label="Permission mode"
+            title={permDisabled ? "Pi runs with full access mode" : undefined}
+          >
             <Hand size={14} strokeWidth={2} color="var(--text-muted)" />
             <Select.Value />
             <Select.Icon>

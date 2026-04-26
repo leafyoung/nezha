@@ -400,6 +400,11 @@ fn build_codex_cmd(agent_bin: &str, permission_mode: &str) -> CommandBuilder {
     c
 }
 
+/// 为 Pi 命令构建 CommandBuilder。Pi 没有权限模式标志，直接传入提示词即可。
+fn build_pi_cmd(agent_bin: &str) -> CommandBuilder {
+    CommandBuilder::new(agent_bin)
+}
+
 // ── Tauri 命令 ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -462,6 +467,10 @@ pub async fn run_task(
     let mut cmd = if is_codex {
         let mut c = build_codex_cmd(&agent_bin, &permission_mode);
         c.arg("--");
+        c.arg(&final_prompt);
+        c
+    } else if is_pi {
+        let mut c = build_pi_cmd(&agent_bin);
         c.arg(&final_prompt);
         c
     } else {
@@ -581,7 +590,7 @@ pub async fn resume_task(
     project_path: String,
     agent: String,
     session_id: String,
-    _prompt: String,
+    prompt: String,
     permission_mode: String,
     cols: Option<u16>,
     rows: Option<u16>,
@@ -602,11 +611,17 @@ pub async fn resume_task(
         c.arg("resume");
         c.arg(&session_id);
         c
+    } else if agent == "pi" {
+        let mut c = build_pi_cmd(&agent_bin);
+        c.arg("--session");
+        c.arg(&session_id);
+        c
     } else {
-        // resume 时 session_id 已知，使用 --resume 标志
+        // resume 时 session_id 已知，使用 --resume <id> 并附带 prompt
         let mut c = build_claude_cmd(&agent_bin, &permission_mode);
         c.arg("--resume");
         c.arg(&session_id);
+        c.arg(&prompt);
         c
     };
     cmd.cwd(&project_path);
@@ -636,6 +651,7 @@ pub async fn resume_task(
         project_path.clone(),
         session_id,
         is_codex,
+        is_pi,
     );
     spawn_pty_reader(
         app.clone(),

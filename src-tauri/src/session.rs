@@ -639,6 +639,8 @@ pub async fn read_session_messages(session_path: String) -> Result<Vec<SessionMe
     let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
     if is_codex_format(&lines) {
         Ok(parse_codex_session(&lines))
+    } else if is_pi_format(&lines) {
+        Ok(parse_pi_session(&lines))
     } else {
         Ok(parse_claude_session(&lines))
     }
@@ -654,6 +656,175 @@ fn is_codex_format(lines: &[&str]) -> bool {
         }
     }
     false
+}
+
+fn is_pi_format(lines: &[&str]) -> bool {
+    // Pi session files start with {"type":"session","version":3,...}
+    // and have {"type":"message",...} lines
+    let first = lines.first().and_then(|l| serde_json::from_str::<serde_json::Value>(l).ok());
+    first
+        .as_ref()
+        .and_then(|v| v.get("type").and_then(|t| t.as_str()))
+        .map(|t| t == "session")
+        .unwrap_or(false)
+}
+
+fn parse_pi_session(lines: &[&str]) -> Vec<SessionMessage> {
+    let mut messages = Vec::new();
+
+    for line in lines {
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+
+        // Pi uses {"type":"message","message":{"role":"...","content":[...]}}
+        if val.get("type").and_then(|v| v.as_str()) != Some("message") {
+            continue;
+        }
+
+        let Some(msg) = val.get("message") else {
+            continue;
+        };
+        let role = msg
+            .get("role")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        match role.as_str() {
+            "user" => {
+                let content = msg
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let parts = pi_user_content(&content);
+                if !parts.is_empty() {
+                    messages.push(SessionMessage { role, content: parts });
+                }
+            }
+            "assistant" => {
+                let content = msg
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let parts = pi_assistant_content(&content);
+                if !parts.is_empty() {
+                    messages.push(SessionMessage { role, content: parts });
+                }
+            }
+            "toolResult" => {
+                // Pi tool results: {"role":"toolResult","toolCallId":"...","toolName":"bash","content":[{"type":"text","text":"..."}],"isError":false}
+                let tool_call_id = msg
+                    .get("toolCallId")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tool_name = msg
+                    .get("toolName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_error = msg
+                    .get("isError")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let content_blocks = msg
+                    .get("content")
+                    .and_then(|c| c.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let output_text: String = content_blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                            b.get("text").and_then(|v| v.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let label = if is_error { "ERROR" } else { "RESULT" };
+                let display = format!("[{}] {}\n{}", label, tool_name, output_text);
+                messages.push(SessionMessage {
+                    role: "assistant".to_string(),
+                    content: vec![SessionContent::ToolUse {
+                        id: tool_call_id,
+                        name: tool_name,
+                        input: display,
+                    }],
+                });
+            }
+            _ => {}
+        }
+    }
+
+    messages
+}
+
+fn pi_user_content(blocks: &[serde_json::Value]) -> Vec<SessionContent> {
+    blocks
+        .iter()
+        .filter_map(|b| {
+            if b.get("type").and_then(|v| v.as_str()) == Some("text") {
+                let text = b.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if !text.trim().is_empty() {
+                    return Some(SessionContent::Text {
+                        text: text.to_string(),
+                    });
+                }
+            }
+            None
+        })
+        .collect()
+}
+
+fn pi_assistant_content(blocks: &[serde_json::Value]) -> Vec<SessionContent> {
+    let mut parts = Vec::new();
+    for block in blocks {
+        match block.get("type").and_then(|v| v.as_str()) {
+            Some("text") => {
+                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                    if !text.trim().is_empty() {
+                        parts.push(SessionContent::Text {
+                            text: text.to_string(),
+                        });
+                    }
+                }
+            }
+            Some("thinking") => {
+                if let Some(thinking) = block.get("thinking").and_then(|v| v.as_str()) {
+                    if !thinking.trim().is_empty() {
+                        parts.push(SessionContent::Thinking {
+                            thinking: thinking.to_string(),
+                        });
+                    }
+                }
+            }
+            Some("toolCall") => {
+                // Pi tool calls: {"type":"toolCall","id":"...","name":"bash","arguments":{"command":"..."}}
+                let id = block
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = block
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let input = block
+                    .get("arguments")
+                    .map(|a| serde_json::to_string(a).unwrap_or_default())
+                    .unwrap_or_default();
+                parts.push(SessionContent::ToolUse { id, name, input });
+            }
+            _ => {}
+        }
+    }
+    parts
 }
 
 fn parse_claude_session(lines: &[&str]) -> Vec<SessionMessage> {
@@ -1176,16 +1347,8 @@ fn send_status_command(app: &AppHandle, task_id: &str, is_codex: bool) {
 /// Pi session directory is derived from cwd: replace non-alphanumeric chars with '-'.
 fn pi_session_dir_for_project(project_path: &str) -> Option<PathBuf> {
     let home = crate::platform::home_dir()?;
-    let dir_name: String = project_path
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
-                c
-            } else {
-                '-'
-            }
-        })
-        .collect();
+    let trimmed = project_path.trim_start_matches('/');
+    let dir_name = format!("--{}--", trimmed.replace('/', "-"));
     Some(home.join(".pi").join("agent").join("sessions").join(dir_name))
 }
 
@@ -1228,6 +1391,27 @@ fn extract_pi_session_id(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Find a Pi session file by its session ID (UUID).
+fn find_pi_session_file_by_id(project_path: &str, session_id: &str) -> Option<PathBuf> {
+    let dir = pi_session_dir_for_project(project_path)?;
+    if !dir.exists() {
+        return None;
+    }
+    for entry in fs::read_dir(&dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            continue;
+        }
+        // Check if filename contains the session ID
+        let name = path.file_name()?.to_str()?;
+        if name.contains(session_id) {
+            return Some(path);
+        }
+    }
+    None
 }
 
 /// Watch for pi session file by polling the session directory for new files.
@@ -1437,7 +1621,32 @@ pub(crate) fn spawn_resume_session_watcher(
     project_path: String,
     session_id: String,
     is_codex: bool,
+    is_pi: bool,
 ) {
+    if is_pi {
+        // Pi resume: session file already exists, just register and emit
+        let tm = app.state::<TaskManager>();
+        let path = find_pi_session_file_by_id(&project_path, &session_id);
+        if let Some(path) = path {
+            let path_string = path.to_string_lossy().into_owned();
+            tm.pi_sessions.lock().insert(
+                task_id.to_string(),
+                crate::PiSessionInfo {
+                    session_id: session_id.clone(),
+                    session_path: path_string.clone(),
+                },
+            );
+            let _ = app.emit(
+                "task-session",
+                serde_json::json!({
+                    "task_id": task_id,
+                    "session_id": session_id,
+                    "session_path": path_string
+                }),
+            );
+        }
+        return;
+    }
     thread::spawn(move || {
         register_and_watch_session(&app, &task_id, &session_id, &project_path, is_codex);
     });

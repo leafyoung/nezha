@@ -121,6 +121,7 @@ fn build_fallback_path() -> String {
     let current = std::env::var("PATH").unwrap_or_default();
     let extras = [
         format!("{home}/.local/bin"),
+        format!("{home}/.bun/bin"),
         format!("{home}/.npm-global/bin"),
         "/opt/homebrew/bin".to_string(),
         "/opt/homebrew/sbin".to_string(),

@@ -22,7 +22,27 @@ interface PastedImage {
   dataUrl: string;
 }
 
+const LAST_AGENT_KEY = "nezha:lastAgent";
+
 type CrossProjectFileMap = Map<string, FileEntry[]>;
+
+function readLastAgent(): AgentType | null {
+  try {
+    const raw = localStorage.getItem(LAST_AGENT_KEY);
+    if (raw === "claude" || raw === "codex" || raw === "pi") return raw;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function saveLastAgent(agent: AgentType) {
+  try {
+    localStorage.setItem(LAST_AGENT_KEY, agent);
+  } catch {
+    // ignore
+  }
+}
 
 function parseFileEntry(f: string): FileEntry {
   const parts = f.split("/");
@@ -56,7 +76,7 @@ export function NewTaskView({
   }) => void;
 }) {
   const { showToast } = useToast();
-  const [agent, setAgent] = useState<AgentType>("claude");
+  const [agent, setAgent] = useState<AgentType>(() => readLastAgent() ?? "claude");
   const [permMode, setPermMode] = useState<PermissionMode>("ask");
   const [planMode, setPlanMode] = useState(false);
 
@@ -81,16 +101,23 @@ export function NewTaskView({
       .then((cfg) => {
         const defaultAgent = cfg.agent.default;
         if (defaultAgent === "claude" || defaultAgent === "codex" || defaultAgent === "pi") {
-          setAgent(defaultAgent);
+          const globalAgent = readLastAgent();
+          setAgent(globalAgent ?? defaultAgent);
         }
         const defaultPerm = cfg.agent.default_permission_mode;
-        if (defaultPerm === "ask" || defaultPerm === "auto_edit" || defaultPerm === "full_access") {
+        if (defaultAgent === "pi") {
+          setPermMode("full_access");
+        } else if (defaultPerm === "ask" || defaultPerm === "auto_edit" || defaultPerm === "full_access") {
           setPermMode(defaultPerm);
         }
       })
       .catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id]);
+
+  useEffect(() => {
+    saveLastAgent(agent);
+  }, [agent]);
 
   const [hasMdFile, setHasMdFile] = useState<boolean | null>(null);
 
@@ -350,7 +377,12 @@ export function NewTaskView({
           planMode={planMode}
           isEmpty={isEmpty}
           hasImages={pastedImages.length > 0}
-          onSetAgent={setAgent}
+          onSetAgent={(nextAgent) => {
+            setAgent(nextAgent);
+            if (nextAgent === "pi") {
+              setPermMode("full_access");
+            }
+          }}
           onSetPermMode={setPermMode}
           onTogglePlanMode={() => setPlanMode((v) => !v)}
           onAddImages={(dataUrls) => {
